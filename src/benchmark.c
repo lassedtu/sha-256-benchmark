@@ -5,7 +5,10 @@
  *
  * The program runs a set of preset test cases. For each case, it hashes the
  * known answer, gives the hash and range to a solver, and checks the result.
- * It then prints the average time for each solver.
+ * As each test case finishes, it prints which case ran, which solver ran it,
+ * and how long it took. When every solver is done, it prints a single ranking
+ * from slowest to fastest, including the percentage improvement each solver
+ * gives over the next-slower one.
  */
 
 #include "registry.h"
@@ -15,6 +18,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
+/**
+ * @struct SolverResult
+ * @brief The measured outcome for one solver.
+ *
+ * @field name The solver name.
+ * @field average The average time in seconds per case.
+ * @field ok Whether the solver answered every case correctly.
+ */
+typedef struct
+{
+    const char *name;
+    double average;
+    int ok;
+} SolverResult;
 
 /**
  * @function seconds_between
@@ -36,7 +54,9 @@ static double seconds_between(struct timespec begin, struct timespec finish)
  * @function run_one_solver
  * @brief Measure one solver over the selected test cases.
  *
- * The max_difficulty filter skips cases that are too hard.
+ * After every case runs, this prints a progress line naming the case, the
+ * solver, and the time it took. The max_difficulty filter skips cases that are
+ * too hard.
  * @param solver The solver to test.
  * @param repeat How many times to run each selected case.
  * @param max_difficulty The highest allowed difficulty. Use 0 to run all cases.
@@ -74,19 +94,31 @@ static double run_one_solver(const Solver *solver, int repeat,
             uint64_t result = solver->run(target, test->start, range_end);
             clock_gettime(CLOCK_MONOTONIC, &finish);
 
-            total_time += seconds_between(begin, finish);
+            double elapsed = seconds_between(begin, finish);
+            total_time += elapsed;
             total_runs += 1;
 
             // Check that the solver found the correct number.
-            if (result != test->answer)
+            int correct = (result == test->answer);
+            if (!correct)
             {
-                printf("  [WRONG] solver \"%s\" case \"%s\": "
-                       "expected %llu but got %llu\n",
-                       solver->name, test->label,
-                       (unsigned long long)test->answer,
-                       (unsigned long long)result);
                 *ok = 0;
             }
+
+            // Show progress for this case as soon as it finishes.
+            if (repeat > 1)
+            {
+                printf("  [%-8s] case \"%s\" (run %d/%d): %.6f s%s\n",
+                       solver->name, test->label, r + 1, repeat, elapsed,
+                       correct ? "" : "  [WRONG]");
+            }
+            else
+            {
+                printf("  [%-8s] case \"%s\": %.6f s%s\n",
+                       solver->name, test->label, elapsed,
+                       correct ? "" : "  [WRONG]");
+            }
+            fflush(stdout);
         }
     }
 
@@ -102,7 +134,8 @@ static double run_one_solver(const Solver *solver, int repeat,
  * @brief Run the benchmark.
  *
  * The program reads optional command-line arguments for repeat count and
- * difficulty filter, then runs the registered solvers and prints a result table.
+ * difficulty filter, runs the registered solvers while printing per-case
+ * progress, then prints a single slowest-to-fastest ranking.
  * @param argc The number of command-line arguments.
  * @param argv The command-line arguments.
  * @return 0 on success.
@@ -148,37 +181,96 @@ int main(int argc, char **argv)
                (unsigned long long)max_difficulty, repeat);
     }
 
-    // Print the header of the result table.
-    printf("%-12s %18s %12s\n", "solver", "avg time/case (s)", "correct");
-    printf("---------------------------------------------------\n");
-
-    // Track the fastest correct solver, so we can name a winner.
-    const char *fastest_name = NULL;
-    double fastest_time = 0.0;
+    // Collect a result per solver so we can rank them afterwards.
+    SolverResult *results = malloc((size_t)solver_count * sizeof(SolverResult));
+    if (results == NULL)
+    {
+        fprintf(stderr, "Out of memory allocating results.\n");
+        return 1;
+    }
 
     for (int s = 0; s < solver_count; s++)
     {
         const Solver *solver = solver_registry[s];
 
+        printf("Running solver \"%s\"...\n", solver->name);
+        fflush(stdout);
+
         int ok = 0;
         double average = run_one_solver(solver, repeat, max_difficulty, &ok);
 
-        printf("%-12s %18.6f %12s\n",
-               solver->name, average, ok ? "yes" : "NO");
-        // Flush the line at once. Thus a slow run still shows progress.
-        fflush(stdout);
+        results[s].name = solver->name;
+        results[s].average = average;
+        results[s].ok = ok;
 
-        if (ok)
-        {
-            if (fastest_name == NULL || average < fastest_time)
-            {
-                fastest_name = solver->name;
-                fastest_time = average;
-            }
-        }
+        printf("  -> \"%s\" average %.6f s/case (%s)\n\n",
+               solver->name, average, ok ? "all correct" : "HAD WRONG ANSWERS");
+        fflush(stdout);
     }
 
-    printf("---------------------------------------------------\n");
+    // Sort a ranking from slowest to fastest.
+    // A simple insertion sort is plenty for the small solver count.
+    for (int i = 1; i < solver_count; i++)
+    {
+        SolverResult key = results[i];
+        int j = i - 1;
+        while (j >= 0 && results[j].average < key.average)
+        {
+            results[j + 1] = results[j];
+            j--;
+        }
+        results[j + 1] = key;
+    }
+
+    printf("Ranking (slowest to fastest):\n");
+    printf("%-5s %-12s %18s %14s\n",
+           "rank", "solver", "avg time/case (s)", "vs. next slower");
+    printf("------------------------------------------------------------\n");
+
+    int rank = 0;
+    double previous_time = 0.0;
+    int have_previous = 0;
+    const char *fastest_name = NULL;
+    double fastest_time = 0.0;
+
+    for (int i = 0; i < solver_count; i++)
+    {
+        // Only rank solvers that answered every case correctly.
+        if (!results[i].ok)
+        {
+            continue;
+        }
+        rank += 1;
+
+        // Percentage improvement over the next-slower ranked solver.
+        // The slowest solver has nothing slower to compare against.
+        if (!have_previous)
+        {
+            printf("%-5d %-12s %18.6f %14s\n",
+                   rank, results[i].name, results[i].average, "-");
+        }
+        else
+        {
+            double improvement = 0.0;
+            if (previous_time > 0.0)
+            {
+                improvement =
+                    (previous_time - results[i].average) / previous_time * 100.0;
+            }
+            printf("%-5d %-12s %18.6f %13.2f%%\n",
+                   rank, results[i].name, results[i].average, improvement);
+        }
+
+        previous_time = results[i].average;
+        have_previous = 1;
+
+        // The list is sorted slowest to fastest, so the last correct entry
+        // seen is the fastest correct solver.
+        fastest_name = results[i].name;
+        fastest_time = results[i].average;
+    }
+
+    printf("------------------------------------------------------------\n");
     if (fastest_name != NULL)
     {
         printf("Fastest correct solver: \"%s\" (%.6f s per case)\n",
@@ -189,5 +281,6 @@ int main(int argc, char **argv)
         printf("No solver gave correct answers on all test cases.\n");
     }
 
+    free(results);
     return 0;
 }
