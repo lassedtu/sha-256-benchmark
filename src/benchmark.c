@@ -108,7 +108,7 @@ static double run_one_solver(const Solver *solver, int repeat,
             // Show progress for this case as soon as it finishes.
             if (repeat > 1)
             {
-                printf("  [%-8s] case \"%s\" (run %d/%d): %.6f s%s\n",
+                printf("  [%-8s] case \"%s\" (run %d/%d): %.6fs%s\n",
                        solver->name, test->label, r + 1, repeat, elapsed,
                        correct ? "" : "  [WRONG]");
             }
@@ -224,7 +224,7 @@ int main(int argc, char **argv)
 
     printf("Ranking (slowest to fastest):\n");
     printf("%-5s %-12s %18s %14s\n",
-           "rank", "solver", "avg time/case (s)", "vs. next slower");
+           "rank", "solver", "avg time/case (s)", "improvement");
     printf("------------------------------------------------------------\n");
 
     int rank = 0;
@@ -273,7 +273,7 @@ int main(int argc, char **argv)
     printf("------------------------------------------------------------\n");
     if (fastest_name != NULL)
     {
-        printf("Fastest correct solver: \"%s\" (%.6f s per case)\n",
+        printf("Fastest correct solver: \"%s\" (%.6fs per case)\n",
                fastest_name, fastest_time);
     }
     else
