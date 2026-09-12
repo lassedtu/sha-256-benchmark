@@ -9,6 +9,10 @@
  * and how long it took. When every solver is done, it prints a single ranking
  * from slowest to fastest, including the percentage improvement each solver
  * gives over the next-slower one.
+ *
+ * The optional --output="file.csv" flag also writes every per-case timing to a
+ * CSV file. That file can be imported into Excel or Google Sheets to draw a
+ * graph of the solvers against the test cases.
  */
 
 #include "registry.h"
@@ -17,6 +21,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 /**
@@ -61,10 +66,11 @@ static double seconds_between(struct timespec begin, struct timespec finish)
  * @param repeat How many times to run each selected case.
  * @param max_difficulty The highest allowed difficulty. Use 0 to run all cases.
  * @param ok Set to 1 if all answers are correct, otherwise 0.
+ * @param csv An open CSV file to append per-case rows to, or NULL to skip it.
  * @return The average time in seconds per case.
  */
 static double run_one_solver(const Solver *solver, int repeat,
-                             uint64_t max_difficulty, int *ok)
+                             uint64_t max_difficulty, int *ok, FILE *csv)
 {
     double total_time = 0.0;
     int total_runs = 0;
@@ -105,6 +111,18 @@ static double run_one_solver(const Solver *solver, int repeat,
                 *ok = 0;
             }
 
+            // Write one CSV row for this run when a CSV file is open. Each row
+            // holds the solver, the case, its difficulty, the run number, the
+            // time, and whether the answer was correct. One row per run keeps
+            // the file easy to pivot or graph in a spreadsheet.
+            if (csv != NULL)
+            {
+                fprintf(csv, "%s,%s,%llu,%d,%.9f,%d\n",
+                        solver->name, test->label,
+                        (unsigned long long)test->difficulty,
+                        r + 1, elapsed, correct ? 1 : 0);
+            }
+
             // Show progress for this case as soon as it finishes.
             if (repeat > 1)
             {
@@ -130,32 +148,115 @@ static double run_one_solver(const Solver *solver, int repeat,
 }
 
 /**
+ * @function find_output_path
+ * @brief Find the CSV output path from the --output flag.
+ *
+ * The flag may be written as --output=file.csv or --output="file.csv". Any
+ * surrounding double quotes are stripped. The flag may appear in any argument
+ * position, so the positional repeat and difficulty arguments still work.
+ * @param argc The number of command-line arguments.
+ * @param argv The command-line arguments.
+ * @return The output path, or NULL when the flag is not present.
+ */
+static const char *find_output_path(int argc, char **argv)
+{
+    const char *prefix = "--output=";
+    size_t prefix_length = strlen(prefix);
+
+    for (int i = 1; i < argc; i++)
+    {
+        if (strncmp(argv[i], prefix, prefix_length) == 0)
+        {
+            const char *value = argv[i] + prefix_length;
+
+            // Strip a leading quote so --output="file.csv" also works. The
+            // shell usually removes quotes, but this guards against a quoted
+            // value that reached the program intact.
+            if (value[0] == '"')
+            {
+                value += 1;
+            }
+            return value;
+        }
+    }
+    return NULL;
+}
+
+/**
+ * @function is_flag
+ * @brief Tell whether an argument is a named flag rather than a positional one.
+ *
+ * A flag starts with a leading dash. The positional repeat and difficulty
+ * arguments are plain numbers, so this lets main skip flags while it reads
+ * them.
+ * @param argument The command-line argument to test.
+ * @return 1 when the argument is a flag, otherwise 0.
+ */
+static int is_flag(const char *argument)
+{
+    return argument[0] == '-';
+}
+
+/**
  * @function main
  * @brief Run the benchmark.
  *
  * The program reads optional command-line arguments for repeat count and
- * difficulty filter, runs the registered solvers while printing per-case
- * progress, then prints a single slowest-to-fastest ranking.
+ * difficulty filter, plus an optional --output="file.csv" flag. It runs the
+ * registered solvers while printing per-case progress, writes per-case rows to
+ * the CSV file when the flag is set, then prints a single slowest-to-fastest
+ * ranking.
  * @param argc The number of command-line arguments.
  * @param argv The command-line arguments.
  * @return 0 on success.
  */
 int main(int argc, char **argv)
 {
+    const char *output_path = find_output_path(argc, argv);
+
+    // Read the positional repeat and difficulty arguments. Named flags such as
+    // --output are skipped so they can sit anywhere on the command line.
+    int positional = 0;
     int repeat = 1;
-    if (argc >= 2)
+    uint64_t max_difficulty = 0;
+
+    for (int i = 1; i < argc; i++)
     {
-        repeat = atoi(argv[1]);
-        if (repeat < 1)
+        if (is_flag(argv[i]))
         {
-            repeat = 1;
+            continue;
+        }
+
+        positional += 1;
+        if (positional == 1)
+        {
+            repeat = atoi(argv[i]);
+            if (repeat < 1)
+            {
+                repeat = 1;
+            }
+        }
+        else if (positional == 2)
+        {
+            max_difficulty = strtoull(argv[i], NULL, 10);
         }
     }
 
-    uint64_t max_difficulty = 0;
-    if (argc >= 3)
+    // Open the CSV file up front so a bad path fails before any work is done.
+    FILE *csv = NULL;
+    if (output_path != NULL)
     {
-        max_difficulty = strtoull(argv[2], NULL, 10);
+        csv = fopen(output_path, "w");
+        if (csv == NULL)
+        {
+            fprintf(stderr, "Could not open output file \"%s\".\n",
+                    output_path);
+            return 1;
+        }
+
+        // Write the header row. These names become the column titles when the
+        // file is imported into a spreadsheet.
+        fprintf(csv, "solver,case,difficulty,run,seconds,correct\n");
     }
 
     // Count how many cases the filter selects, so the header is honest.
@@ -186,6 +287,10 @@ int main(int argc, char **argv)
     if (results == NULL)
     {
         fprintf(stderr, "Out of memory allocating results.\n");
+        if (csv != NULL)
+        {
+            fclose(csv);
+        }
         return 1;
     }
 
@@ -197,7 +302,7 @@ int main(int argc, char **argv)
         fflush(stdout);
 
         int ok = 0;
-        double average = run_one_solver(solver, repeat, max_difficulty, &ok);
+        double average = run_one_solver(solver, repeat, max_difficulty, &ok, csv);
 
         results[s].name = solver->name;
         results[s].average = average;
@@ -282,5 +387,13 @@ int main(int argc, char **argv)
     }
 
     free(results);
+
+    // Close the CSV file and tell the user where the data landed.
+    if (csv != NULL)
+    {
+        fclose(csv);
+        printf("\nWrote per-case results to \"%s\".\n", output_path);
+    }
+
     return 0;
 }

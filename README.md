@@ -32,11 +32,33 @@ Only run small tests:
 Arguments:
 
 ```text
-benchmark [repeats] [max_difficulty]
+benchmark [repeats] [max_difficulty] [--output="file.csv"]
 ```
 
 * `repeats`: Number of runs per test. Default: `1`.
 * `max_difficulty`: Maximum range size. `0` runs all tests.
+* `--output="file.csv"`: Write every per-case timing to a CSV file.
+
+## Export results to CSV
+
+Add the `--output` flag to write the results to a CSV file:
+
+```bash
+./build/benchmark 5 --output="results.csv"
+```
+
+The flag can sit anywhere on the command line. The file has one row per
+solver, test case, and run:
+
+```text
+solver,case,difficulty,run,seconds,correct
+linear,ramp-1k,1000,1,0.000336000,1
+threaded,ramp-1k,1000,1,0.000196000,1
+```
+
+Import the file into Excel or Google Sheets to graph the solvers against the
+test cases. The `difficulty` column works well as the x-axis, `seconds` as the
+y-axis, and `solver` as the series.
 
 Clean the build:
 
