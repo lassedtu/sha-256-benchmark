@@ -19,6 +19,14 @@ CC      := cc
 CFLAGS  := -O3 -Wall -Wextra -std=c11
 LDFLAGS := -pthread
 
+# Extra compile flags. Enable the prism SIMD path with:
+#   make PRISM_SIMD=1
+# The prism SIMD path is a SHA-256 reimplementation, so keep it off until the
+# course staff confirms it counts as "the provided implementation".
+ifeq ($(PRISM_SIMD),1)
+CFLAGS += -DPRISM_SIMD
+endif
+
 # The folder for all build output.
 BUILD   := build
 
@@ -35,7 +43,7 @@ SOURCES := \
 	src/solvers/threaded.c \
 	src/solvers/dynamic.c \
 	src/solvers/hybrid.c \
-	src/solvers/turbo.c
+	src/solvers/prism.c
 
 # The object files. Each source file becomes one object file in the build
 # folder. For example, "src/hash.c" becomes "build/src/hash.o".

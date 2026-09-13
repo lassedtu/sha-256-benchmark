@@ -161,9 +161,7 @@ src/
 ├── registry.c/h      Solver list
 ├── solver.h          Solver interface
 └── solvers/          Solver implementations
-    ├── dynamic.c
-    ├── linear.c
-    └── threaded.c
+    └── ...
 
 vendor/
 └── lonesha256.h      Provided SHA-256 implementation

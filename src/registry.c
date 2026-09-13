@@ -13,7 +13,7 @@ extern const Solver solver_linear;
 extern const Solver solver_threaded;
 extern const Solver solver_dynamic;
 extern const Solver solver_hybrid;
-extern const Solver solver_turbo;
+extern const Solver solver_prism;
 
 // This array holds the full list of algorithms for the benchmark.
 static const Solver *const all_solvers[] = {
@@ -21,7 +21,7 @@ static const Solver *const all_solvers[] = {
     &solver_threaded,
     &solver_dynamic,
     &solver_hybrid,
-    &solver_turbo,
+    &solver_prism,
 };
 
 // These two symbols give the rest of the program a view of the list.
