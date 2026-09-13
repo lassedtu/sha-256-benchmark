@@ -32,7 +32,9 @@ SOURCES := \
 	src/hash.c \
 	src/registry.c \
 	src/solvers/linear.c \
-	src/solvers/threaded.c
+	src/solvers/threaded.c \
+	src/solvers/dynamic.c \
+	src/solvers/hybrid.c
 
 # The object files. Each source file becomes one object file in the build
 # folder. For example, "src/hash.c" becomes "build/src/hash.o".

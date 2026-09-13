@@ -10,9 +10,10 @@
  * from slowest to fastest, including the percentage improvement each solver
  * gives over the next-slower one.
  *
- * The optional --output="file.csv" flag also writes every per-case timing to a
- * CSV file. That file can be imported into Excel or Google Sheets to draw a
- * graph of the solvers against the test cases.
+ * The optional --output="file.csv" flag also writes one per-case timing to a
+ * CSV file. With repeats, the timing is the average over the repeats. That
+ * file can be imported into Excel or Google Sheets to draw a graph of the
+ * solvers against the test cases.
  */
 
 #include "registry.h"
@@ -92,6 +93,12 @@ static double run_one_solver(const Solver *solver, int repeat,
 
         uint64_t range_end = test->start + test->difficulty;
 
+        // Sum the time over every repeat of this case, then report the
+        // average. Only per-case averages are printed and written to the
+        // CSV, never the individual runs.
+        double case_time = 0.0;
+        int case_correct = 1;
+
         for (int r = 0; r < repeat; r++)
         {
             struct timespec begin, finish;
@@ -101,43 +108,49 @@ static double run_one_solver(const Solver *solver, int repeat,
             clock_gettime(CLOCK_MONOTONIC, &finish);
 
             double elapsed = seconds_between(begin, finish);
-            total_time += elapsed;
-            total_runs += 1;
+            case_time += elapsed;
 
-            // Check that the solver found the correct number.
-            int correct = (result == test->answer);
-            if (!correct)
+            // The case is correct only if every repeat was correct.
+            if (result != test->answer)
             {
-                *ok = 0;
+                case_correct = 0;
             }
-
-            // Write one CSV row for this run when a CSV file is open. Each row
-            // holds the solver, the case, its difficulty, the run number, the
-            // time, and whether the answer was correct. One row per run keeps
-            // the file easy to pivot or graph in a spreadsheet.
-            if (csv != NULL)
-            {
-                fprintf(csv, "%s,%s,%llu,%d,%.9f,%d\n",
-                        solver->name, test->label,
-                        (unsigned long long)test->difficulty,
-                        r + 1, elapsed, correct ? 1 : 0);
-            }
-
-            // Show progress for this case as soon as it finishes.
-            if (repeat > 1)
-            {
-                printf("  [%-8s] case \"%s\" (run %d/%d): %.6fs%s\n",
-                       solver->name, test->label, r + 1, repeat, elapsed,
-                       correct ? "" : "  [WRONG]");
-            }
-            else
-            {
-                printf("  [%-8s] case \"%s\": %.6f s%s\n",
-                       solver->name, test->label, elapsed,
-                       correct ? "" : "  [WRONG]");
-            }
-            fflush(stdout);
         }
+
+        double case_average = case_time / (double)repeat;
+        total_time += case_average;
+        total_runs += 1;
+
+        if (!case_correct)
+        {
+            *ok = 0;
+        }
+
+        // Write one CSV row per case holding the average time over all
+        // repeats. The "runs" column records how many repeats the average is
+        // taken over. One row per case keeps the file easy to graph.
+        if (csv != NULL)
+        {
+            fprintf(csv, "%s,%s,%llu,%d,%.9f,%d\n",
+                    solver->name, test->label,
+                    (unsigned long long)test->difficulty,
+                    repeat, case_average, case_correct ? 1 : 0);
+        }
+
+        // Show the averaged result for this case.
+        if (repeat > 1)
+        {
+            printf("  [%-8s] case \"%s\" (avg of %d): %.6f s%s\n",
+                   solver->name, test->label, repeat, case_average,
+                   case_correct ? "" : "  [WRONG]");
+        }
+        else
+        {
+            printf("  [%-8s] case \"%s\": %.6f s%s\n",
+                   solver->name, test->label, case_average,
+                   case_correct ? "" : "  [WRONG]");
+        }
+        fflush(stdout);
     }
 
     if (total_runs == 0)
@@ -183,6 +196,75 @@ static const char *find_output_path(int argc, char **argv)
 }
 
 /**
+ * @function solver_is_selected
+ * @brief Tell whether a solver was named by a --solver flag.
+ *
+ * The flag may be written as --solver=name or --solver="a,b,c". It may appear
+ * more than once, and each one may hold a comma-separated list of names. When
+ * no --solver flag is present at all, every solver is selected, so the default
+ * behaviour runs the whole set.
+ * @param name The solver name to test.
+ * @param argc The number of command-line arguments.
+ * @param argv The command-line arguments.
+ * @return 1 when the solver should run, otherwise 0.
+ */
+static int solver_is_selected(const char *name, int argc, char **argv)
+{
+    const char *prefix = "--solver=";
+    size_t prefix_length = strlen(prefix);
+    int had_flag = 0;
+
+    for (int i = 1; i < argc; i++)
+    {
+        if (strncmp(argv[i], prefix, prefix_length) != 0)
+        {
+            continue;
+        }
+        had_flag = 1;
+
+        const char *value = argv[i] + prefix_length;
+
+        // Strip a leading quote so --solver="a,b" also works when the shell
+        // passes the quotes through intact.
+        if (value[0] == '"')
+        {
+            value += 1;
+        }
+
+        // Walk the comma-separated list and compare each entry to the name.
+        // A trailing quote on the last entry is ignored by the length check.
+        const char *entry = value;
+        while (*entry != '\0')
+        {
+            const char *comma = strchr(entry, ',');
+            size_t length = (comma != NULL) ? (size_t)(comma - entry)
+                                            : strlen(entry);
+
+            // Drop a trailing quote from --solver="a,b" style values.
+            if (length > 0 && entry[length - 1] == '"')
+            {
+                length -= 1;
+            }
+
+            if (length == strlen(name) &&
+                strncmp(entry, name, length) == 0)
+            {
+                return 1;
+            }
+
+            if (comma == NULL)
+            {
+                break;
+            }
+            entry = comma + 1;
+        }
+    }
+
+    // No --solver flag means run everything.
+    return had_flag ? 0 : 1;
+}
+
+/**
  * @function is_flag
  * @brief Tell whether an argument is a named flag rather than a positional one.
  *
@@ -203,9 +285,9 @@ static int is_flag(const char *argument)
  *
  * The program reads optional command-line arguments for repeat count and
  * difficulty filter, plus an optional --output="file.csv" flag. It runs the
- * registered solvers while printing per-case progress, writes per-case rows to
- * the CSV file when the flag is set, then prints a single slowest-to-fastest
- * ranking.
+ * registered solvers while printing per-case progress, writes one averaged row
+ * per case to the CSV file when the flag is set, then prints a single
+ * slowest-to-fastest ranking.
  * @param argc The number of command-line arguments.
  * @param argv The command-line arguments.
  * @return 0 on success.
@@ -255,8 +337,9 @@ int main(int argc, char **argv)
         }
 
         // Write the header row. These names become the column titles when the
-        // file is imported into a spreadsheet.
-        fprintf(csv, "solver,case,difficulty,run,seconds,correct\n");
+        // file is imported into a spreadsheet. The "runs" column says how many
+        // repeats the "seconds" average is taken over.
+        fprintf(csv, "solver,case,difficulty,runs,seconds,correct\n");
     }
 
     // Count how many cases the filter selects, so the header is honest.
@@ -294,9 +377,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    int result_count = 0;
     for (int s = 0; s < solver_count; s++)
     {
         const Solver *solver = solver_registry[s];
+
+        // Skip solvers the user did not select with --solver.
+        if (!solver_is_selected(solver->name, argc, argv))
+        {
+            continue;
+        }
 
         printf("Running solver \"%s\"...\n", solver->name);
         fflush(stdout);
@@ -304,18 +394,30 @@ int main(int argc, char **argv)
         int ok = 0;
         double average = run_one_solver(solver, repeat, max_difficulty, &ok, csv);
 
-        results[s].name = solver->name;
-        results[s].average = average;
-        results[s].ok = ok;
+        results[result_count].name = solver->name;
+        results[result_count].average = average;
+        results[result_count].ok = ok;
+        result_count += 1;
 
         printf("  -> \"%s\" average %.6f s/case (%s)\n\n",
                solver->name, average, ok ? "all correct" : "HAD WRONG ANSWERS");
         fflush(stdout);
     }
 
+    if (result_count == 0)
+    {
+        printf("No solver matched the --solver selection.\n");
+        free(results);
+        if (csv != NULL)
+        {
+            fclose(csv);
+        }
+        return 1;
+    }
+
     // Sort a ranking from slowest to fastest.
     // A simple insertion sort is plenty for the small solver count.
-    for (int i = 1; i < solver_count; i++)
+    for (int i = 1; i < result_count; i++)
     {
         SolverResult key = results[i];
         int j = i - 1;
@@ -338,7 +440,7 @@ int main(int argc, char **argv)
     const char *fastest_name = NULL;
     double fastest_time = 0.0;
 
-    for (int i = 0; i < solver_count; i++)
+    for (int i = 0; i < result_count; i++)
     {
         // Only rank solvers that answered every case correctly.
         if (!results[i].ok)

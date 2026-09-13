@@ -11,7 +11,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
-// The number of threads. 16 matches the CPU count of the environment.
+// The number of threads.
 #define THREAD_COUNT 16
 
 /**

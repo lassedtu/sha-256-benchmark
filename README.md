@@ -32,12 +32,31 @@ Only run small tests:
 Arguments:
 
 ```text
-benchmark [repeats] [max_difficulty] [--output="file.csv"]
+benchmark [repeats] [max_difficulty] [--solver="name"] [--output="file.csv"]
 ```
 
 * `repeats`: Number of runs per test. Default: `1`.
 * `max_difficulty`: Maximum range size. `0` runs all tests.
+* `--solver="name"`: Only run the named solver(s). Repeatable and accepts a
+  comma-separated list. Runs all solvers when omitted.
 * `--output="file.csv"`: Write every per-case timing to a CSV file.
+
+## Run specific solvers
+
+Add the `--solver` flag to run only the solvers you name:
+
+```bash
+./build/benchmark --solver="dynamic"
+```
+
+Run several by repeating the flag or with a comma-separated list:
+
+```bash
+./build/benchmark --solver="threaded,dynamic"
+```
+
+The flag can sit anywhere on the command line. Without it, the benchmark runs
+every solver.
 
 ## Export results to CSV
 
@@ -48,10 +67,11 @@ Add the `--output` flag to write the results to a CSV file:
 ```
 
 The flag can sit anywhere on the command line. The file has one row per
-solver, test case, and run:
+solver and test case. With repeats, the `seconds` column is the average over
+the runs, and the `runs` column says how many runs the average covers:
 
 ```text
-solver,case,difficulty,run,seconds,correct
+solver,case,difficulty,runs,seconds,correct
 linear,ramp-1k,1000,1,0.000336000,1
 threaded,ramp-1k,1000,1,0.000196000,1
 ```
@@ -141,6 +161,7 @@ src/
 ├── registry.c/h      Solver list
 ├── solver.h          Solver interface
 └── solvers/          Solver implementations
+    ├── dynamic.c
     ├── linear.c
     └── threaded.c
 
