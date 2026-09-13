@@ -140,7 +140,7 @@ static double run_one_solver(const Solver *solver, int repeat,
         // Show the averaged result for this case.
         if (repeat > 1)
         {
-            printf("  [%-8s] case \"%s\" (avg of %d): %.6f s%s\n",
+            printf("  [%-8s] case \"%s\" (avg of %d): %.6fs%s\n",
                    solver->name, test->label, repeat, case_average,
                    case_correct ? "" : "  [WRONG]");
         }
